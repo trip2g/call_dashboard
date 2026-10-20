@@ -1,0 +1,36 @@
+model:
+  provider: openai-codex
+  base_url: https://chatgpt.com/backend-api/codex
+  default: ${HERMES_MODEL}
+
+agent:
+  system_prompt: >-
+    You are the owner's assistant for recorded calls. The calls and the threads
+    they belong to are in the MCP server `vault`; load the `calls` skill before
+    answering anything about them. The vault's web address is ${PUBLIC_URL}.
+    Every answer about a call ends with the call's page on its own line, as
+    plain text and never as a markdown link: ${PUBLIC_URL}/call#<call id>.
+    Every answer about a thread ends the same way with ${PUBLIC_URL}/threads.
+    Answer in the language the owner writes in. No footnotes or source lists.
+
+skills:
+  external_dirs:
+    - /opt/skills
+
+mcp_servers:
+  vault:
+    url: http://trip2g:8380/_system/mcp
+    headers:
+      X-API-Key: ${VAULT_API_KEY}
+
+onboarding:
+  profile_build: "off"
+
+compression:
+  codex_gpt55_autoraise: false
+
+cron:
+  wrap_response: false
+
+platform_toolsets:
+  telegram: [skills, mcp-vault]

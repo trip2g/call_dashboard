@@ -1,0 +1,131 @@
+name: call-dashboard
+
+x-hermes-image: &hermes-image nousresearch/hermes-agent:v0.22.2
+
+services:
+  minio:
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
+    command: ["server", "/data"]
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: trip2g
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?run scripts/setup.sh first}
+    volumes:
+      - minio:/data
+
+  trip2g:
+    image: ghcr.io/trip2g/trip2g:0.12.0
+    depends_on: [minio]
+    restart: unless-stopped
+    ports:
+      - "${TRIP2G_PORT:-8380}:8380"
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8380
+      INTERNAL_LISTEN_ADDR: 0.0.0.0:8381
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8380}
+      DB_FILE: /data/trip2g.sqlite3
+      DEV: "true"
+      OWNER_EMAIL: owner@example.com
+      OWNER_PERSONAL_TOKEN_VALUE: ${OWNER_TOKEN:?run scripts/setup.sh first}
+      JWT_SECRET: ${JWT_SECRET:?run scripts/setup.sh first}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?run scripts/setup.sh first}
+      USER_TOKEN_INSECURE: "true"
+      WEBHOOK_ALLOW_PRIVATE: "true"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY_ID: trip2g
+      MINIO_SECRET_KEY: ${MINIO_PASSWORD}
+      MINIO_BUCKET: trip2g
+      MINIO_USE_SSL: "false"
+      RESEND_API_KEY: unused
+      MAIL_FROM: owner@example.com
+    volumes:
+      - trip2g:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8381/healthz || exit 1"]
+      interval: 3s
+      retries: 40
+
+  seed:
+    image: node:22.20.0-alpine3.22
+    depends_on:
+      trip2g:
+        condition: service_healthy
+    environment:
+      VAULT_API_KEY: ${VAULT_API_KEY:-}
+      TRIP2G_REF: v0.12.0
+    volumes:
+      - ./vault:/vault:ro
+      - ./scripts:/scripts:ro
+      - ./samples:/samples:ro
+      - seed:/state
+    command: ["sh", "/scripts/seed.sh"]
+
+  codex-bridge:
+    image: *hermes-image
+    user: "10000:10000"
+    entrypoint: ["/opt/hermes/.venv/bin/python", "/bridge/codex_bridge.py"]
+    environment:
+      BRIDGE_KEY: ${BRIDGE_KEY:?run scripts/setup.sh first}
+    volumes:
+      - hermes:/opt/data
+      - ./bridge:/bridge:ro
+
+  fleet:
+    build: ./fleet
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      codex-bridge:
+        condition: service_started
+    restart: unless-stopped
+    environment:
+      TRIP2G_FLEET_FLEET_ID: codex
+      TRIP2G_FLEET_TRIP2G_URL: http://trip2g:8380
+      TRIP2G_FLEET_CALLBACK_URL: http://fleet:9090
+      TRIP2G_FLEET_LISTEN: 0.0.0.0:9090
+      TRIP2G_FLEET_TRIP2G_ADMIN_PERSONAL_TOKEN: ${OWNER_TOKEN}
+      TRIP2G_FLEET_FLEET_SECRET: ${FLEET_SECRET:?run scripts/setup.sh first}
+      TRIP2G_FLEET_LLM_BASE_URL: http://codex-bridge:8000/v1
+      TRIP2G_FLEET_LLM_API_KEY: ${BRIDGE_KEY}
+      TRIP2G_FLEET_DEFAULT_MODEL: ${ROLE_MODEL:-gpt-6-sol}
+      TRIP2G_FLEET_AGENTS_FOLDER: roles/
+
+  hermes:
+    image: *hermes-image
+    command: ["gateway", "run"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-6-sol}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN in .env}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_OWNER_ID:?set TELEGRAM_OWNER_ID in .env}
+      TELEGRAM_HOME_CHANNEL: ${TELEGRAM_OWNER_ID}
+      VAULT_API_KEY: ${VAULT_API_KEY}
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8380}
+    volumes:
+      - hermes:/opt/data
+      - ./hermes/config.yaml:/etc/hermes/config.yaml:ro
+      - ./skills:/opt/skills:ro
+      - ./hermes/scripts/calls_notify.py:/opt/data/scripts/calls_notify.py:ro
+
+  notify-job:
+    image: *hermes-image
+    depends_on:
+      hermes:
+        condition: service_started
+    user: "10000:10000"
+    entrypoint: ["sh", "/notify-job.sh"]
+    environment:
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-6-sol}
+    volumes:
+      - hermes:/opt/data
+      - ./hermes/config.yaml:/etc/hermes/config.yaml:ro
+      - ./scripts/notify-job.sh:/notify-job.sh:ro
+
+volumes:
+  minio:
+  trip2g:
+  seed:
+  hermes:
