@@ -181,6 +181,8 @@ Telegram does not turn `localhost` addresses into links, so locally the bot
 prints the address as text. Put the stack behind a real domain and set
 `PUBLIC_URL` to make them clickable.
 
+![The bot answering about the call and the thread, each answer ending with a dashboard link](docs/07-telegram-answers.png)
+
 ## The pieces
 
 ### The vault (`vault/`)
