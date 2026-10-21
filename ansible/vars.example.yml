@@ -1,5 +1,5 @@
 calls_domain: calls.example.com
-calls_owner_email: you@example.com
+calls_owner_email: you@your-domain.tld
 
 telegram_bot_token: "123456:ABC..."
 telegram_owner_id: "123456789"
