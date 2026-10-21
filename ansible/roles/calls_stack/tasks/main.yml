@@ -115,6 +115,12 @@
   community.docker.docker_compose_v2:
     project_src: "{{ calls_dir }}"
     remove_orphans: true
+  register: calls_up
+  changed_when: >-
+    (calls_up.actions | rejectattr('status', 'equalto', 'Starting') | list
+    + (calls_up.actions | selectattr('status', 'equalto', 'Starting')
+    | rejectattr('id', 'match', '.*-(seed|vault-seed|notify-job)-[0-9]+$') | list))
+    | length > 0
 
 - name: Onboarding vault archive for the owner
   ansible.builtin.shell: >-

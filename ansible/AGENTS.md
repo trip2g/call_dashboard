@@ -130,8 +130,9 @@ ssh root@<ip> 'cd /opt/call-dashboard && docker compose exec -T -u 10000:10000 h
 Expected: `Connected` and `Tools discovered: 8`, `signin_link` among them.
 
 A second `ansible-playbook site.yml` must end with `failed=0` and
-`changed=1`: compose starts the one-shot `seed`, `vault-seed` and
-`notify-job` again, and they exit at once.
+`changed=0`. Compose does start the one-shot `seed`, `vault-seed` and
+`notify-job` again: they find their work done and exit (`vault-seed` runs one
+sync), and the playbook does not count that as a change.
 
 ## 6. Known failures
 
