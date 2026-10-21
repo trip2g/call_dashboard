@@ -70,6 +70,7 @@ flowchart LR
 | `fleet` | `ghcr.io/trip2g/trip2g:0.12.0`, run as `/fleet` | Registers webhooks for `vault/roles/*.md` and runs them |
 | `codex-bridge` | `nousresearch/hermes-agent` | Turns fleet's chat-completions calls into Codex Responses calls with the Codex login Hermes stores |
 | `hermes` | `nousresearch/hermes-agent:v0.22.2` | The Telegram assistant, with the `calls` skill and the notify job |
+| `vault-seed` | same | Puts the vault in Hermes's volume and syncs it, then exits |
 | `notify-job` | same | Creates the cron job once, then exits |
 
 Fleet ships inside the trip2g image as a second binary, `/fleet`, so both
@@ -183,6 +184,108 @@ prints the address as text. Put the stack behind a real domain and set
 
 ![The bot answering about the call and the thread, each answer ending with a dashboard link](docs/07-telegram-answers.png)
 
+## On your own server
+
+`ansible/` installs the same stack on a bare Ubuntu 24.04 server behind Caddy,
+with a Let's Encrypt certificate for your domain. The instructions are written
+for an AI agent to run: **[ansible/AGENTS.md](ansible/AGENTS.md)** lists the
+inputs, the commands, the checks after each step, the known failures, and what
+to hand back to you. A person can follow it just as well.
+
+What changes from the local demo: `DEV` is off; only Caddy publishes ports
+(80, 443, 443/udp); files are stored on the server's disk with requests up to
+200 MB, because call audio is 15–40 MB; fleet shares trip2g's network
+namespace so its webhooks stay on loopback. The server runs
+`docker-compose.yml` plus a `docker-compose.prod.yml` the playbook writes, and
+`COMPOSE_FILE` in its `.env` selects both.
+
+### Sign in
+
+There is no password. You sign in with a one-time link, in one of two ways:
+
+- **On the server:** `docker compose exec -T trip2g /trip2g login-link` in
+  `/opt/call-dashboard` prints a link that works once, within 5 minutes.
+- **From the bot:** write «дай ссылку для входа». Hermes calls
+  `signin_link`, which sends the link to your chat as a «Войти» button. The
+  link never passes through the model as text, because a model relaying a long
+  link shortens it. This needs the Codex login below.
+
+Control of your chat with the bot gives what you have: reading the vault
+through the bot, and the web UI through the link. Only your Telegram id
+(`TELEGRAM_ALLOWED_USERS`) can talk to the bot.
+
+Two more ways to sign in, both optional:
+
+- **Email codes** need a mail relay. Set `smtp_host`, `smtp_user`,
+  `smtp_pass` and `mail_from` in `ansible/vars.yml` (Resend's relay is
+  `smtp.resend.com`, user `resend`, password the API key) and run the playbook
+  again. Providers: trip2g's [email delivery guide](https://trip2g.com/en/user/smtp).
+  Without a relay no code is delivered.
+- **Google or GitHub:** set it up in the admin panel by trip2g's
+  [OAuth guide](https://trip2g.com/en/user/oauth). The callback URLs are
+  `https://<your domain>/_system/auth/google/callback` and
+  `https://<your domain>/_system/auth/github/callback`.
+
+### Log in to Codex
+
+```sh
+ssh -t root@calls.example.com 'cd /opt/call-dashboard && docker compose run --rm --no-deps --user 10000:10000 --entrypoint hermes hermes auth add openai-codex'
+```
+
+Hermes's device login, run on the server: open the URL it prints and enter
+the code. Until then the roles and the bot fail on every model call. Do not
+copy a local `auth.json`: Codex rotates the refresh token, so two copies cannot
+both stay logged in.
+
+### Your vault on your computer
+
+`/opt/call-dashboard/onboarding.zip` holds the trip2g Obsidian plugin, its sync
+script and an API key of its own:
+
+```sh
+scp root@calls.example.com:/opt/call-dashboard/onboarding.zip .
+unzip onboarding.zip && cd calls.example.com
+node .obsidian/plugins/trip2g/trip2g-sync.mjs --folder . --dry-run
+node .obsidian/plugins/trip2g/trip2g-sync.mjs --folder . --two-way
+```
+
+### Your agent
+
+`/opt/call-dashboard/agent-access.md` (mode 0600) is for your own AI agent: the
+instance URL, an API key made for it, the MCP address (`/_system/mcp`) and the
+sync commands. It holds the key, so keep it private.
+
+### Record calls with Amanu
+
+Amanu records and transcribes calls on
+a Mac. `amanu/amanu-to-trip2g.mjs` is an `on_stop` hook: after each call it
+writes `transcripts/<date>-<id>.md` into your vault with the audio embedded,
+then syncs it, and the review role picks it up. Its page uses the
+`calls/transcript` layout (`vault/_layouts/calls/transcript.html`): a player
+whose timecodes seek the audio.
+
+1. Copy `amanu/amanu-to-trip2g.mjs` into your vault's
+   `.obsidian/plugins/trip2g/`, next to `trip2g-sync.mjs`.
+2. In `~/.config/amanu/config.json` set:
+
+   ```json
+   {
+     "keep_audio": true,
+     "recordings_dir": "/Users/you/calls.example.com/calls/amanu",
+     "on_stop": "/opt/homebrew/bin/node /Users/you/calls.example.com/.obsidian/plugins/trip2g/amanu-to-trip2g.mjs"
+   }
+   ```
+
+   - `recordings_dir` must be inside the vault, or the audio is not uploaded.
+   - `keep_audio: true`, or Amanu deletes the audio before the hook runs.
+   - The node path must be absolute (`which node`): the Amanu app starts the
+     hook without your shell's `PATH`.
+3. Restart Amanu after macOS asks for microphone and system audio access; the
+   recording during which access was granted comes out silent.
+
+The hook logs to `trip2g.log` in each meeting's folder. To rerun it by hand:
+`node <vault>/.obsidian/plugins/trip2g/amanu-to-trip2g.mjs "<meeting folder>"`.
+
 ## The pieces
 
 ### The vault (`vault/`)
@@ -196,7 +299,7 @@ prints the address as text. Put the stack behind a real domain and set
 | `people/`, `categories/` | One note each |
 | `call_edits/` | Written by the call page: the owner's corrections and `verified` marks |
 | `roles/` | The three fleet roles |
-| `_layouts/calls/` | The dashboard layouts, unchanged from trip2g's `docs/_layouts/calls` |
+| `_layouts/calls/` | The dashboard layouts, unchanged from trip2g's `docs/_layouts/calls`, and `transcript.html`, the page of a recorded call with its audio |
 | `call.md`, `threads.md` | The two pages and their settings |
 
 The page settings are documented in trip2g's
@@ -223,8 +326,26 @@ CLI or the admin editor), and fleet picks it up within 30 seconds.
 
 - `hermes/config.yaml` is mounted as Hermes's managed config: provider
   `openai-codex`, the vault as MCP server `vault` (API key in `X-API-Key`),
-  the `calls` skill, and only two toolsets in Telegram — skills and the vault.
-  The bot can read the vault and nothing else.
+  `hermes/secondbrain/secondbrain_mcp.py` as MCP server `secondbrain`, the
+  `calls` skill, and three toolsets in Telegram: skills, `vault` and
+  `secondbrain`.
+- `secondbrain` keeps the vault as Markdown files in the `hermes` volume
+  (`/opt/data/secondbrain`) and syncs them both ways with trip2g's own sync
+  script. Its tools (`write_note`, `log`, `daily`, `upsert_frontmatter_field`,
+  `publish_note`, `index_append`, `sync`) save a note and sync it in one call.
+  `signin_link` sends the owner a sign-in button; it uses the owner token,
+  because trip2g mints sign-in links only for an admin session.
+- The `vault-seed` service runs before Hermes: on a fresh volume it downloads
+  the onboarding vault from trip2g, points its sync at `http://trip2g:8380`,
+  and syncs. On later starts it only syncs. The first sync also pushes the
+  archive's starter notes (`AGENTS.md`, `CLAUDE.md`, `feed.md`, `robots.md`,
+  `_header.md`, a few layouts).
+- Tests for `secondbrain`, run in the Hermes image:
+
+  ```sh
+  docker run --rm --user root --entrypoint sh -v "$PWD/hermes/secondbrain:/src:ro" \
+    nousresearch/hermes-agent:v0.22.2 -c 'python3 -m ensurepip >/dev/null && python3 -m pip install -q pytest && cp -r /src /tmp/sb && cd /tmp/sb && python3 -m pytest -q tests'
+  ```
 - `skills/calls/SKILL.md` tells it where calls and threads live, to answer
   from the notes only, and to end every answer with the page link.
 - `hermes/scripts/calls_notify.py` runs every minute as a Hermes cron job in
@@ -240,8 +361,9 @@ from trip2g's documentation. No real conversation is in this repository.
 
 ## Notes
 
-- This is a local demo. `DEV=true` makes the sign-in code `111111` for
-  anyone who can reach the port; do not expose it as is.
+- The local demo runs with `DEV=true`, which makes the sign-in code `111111`
+  for anyone who can reach the port; do not expose it as is. To put it on the
+  internet, use [the playbook](#on-your-own-server).
 - trip2g 0.12.0 sometimes crashes on its very first boot while it creates the
   database; `restart: unless-stopped` brings it back.
 - `docker compose down -v` deletes everything, including the Codex login.

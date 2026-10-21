@@ -1,0 +1,14 @@
+calls_dir: /opt/call-dashboard
+calls_repo_dir: "{{ playbook_dir }}/.."
+
+trip2g_image: ghcr.io/trip2g/trip2g:0.12.0
+trip2g_sync_ref: v0.12.0
+caddy_image: caddy:2.11.6
+
+hermes_model: gpt-6-sol
+role_model: gpt-6-sol
+
+calls_max_request_body_mb: 200
+calls_storage_assets_limit: 20GB
+
+

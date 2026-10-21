@@ -1,0 +1,54 @@
+services:
+  minio:
+    profiles: [s3]
+
+  trip2g:
+    image: ${TRIP2G_IMAGE}
+    depends_on: !reset []
+    ports: !reset []
+    environment: !override
+      LISTEN_ADDR: 0.0.0.0:8380
+      INTERNAL_LISTEN_ADDR: 127.0.0.1:8381
+      PUBLIC_URL: ${PUBLIC_URL}
+      DB_FILE: /data/trip2g.sqlite3
+      OWNER_EMAIL: ${OWNER_EMAIL}
+      OWNER_PERSONAL_TOKEN_VALUE: ${OWNER_TOKEN}
+      JWT_SECRET: ${JWT_SECRET}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      WEBHOOK_ALLOW_PRIVATE: "true"
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_DIR: /data/storage
+      MAX_REQUEST_BODY_SIZE: "{{ calls_max_request_body_mb }}"
+      STORAGE_ASSETS_LIMIT: {{ calls_storage_assets_limit }}
+{% if smtp_host is defined %}
+      SMTP_HOST: {{ smtp_host }}
+      SMTP_PORT: "{{ smtp_port | default(587) }}"
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      MAIL_FROM: {{ mail_from }}
+{% endif %}
+
+  fleet:
+    image: ${TRIP2G_IMAGE}
+    network_mode: service:trip2g
+    environment:
+      TRIP2G_FLEET_TRIP2G_URL: http://127.0.0.1:8380
+      TRIP2G_FLEET_CALLBACK_URL: http://127.0.0.1:9090
+      TRIP2G_FLEET_LISTEN: 127.0.0.1:9090
+
+  caddy:
+    image: {{ caddy_image }}
+    depends_on: [trip2g]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

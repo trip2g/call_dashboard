@@ -1,0 +1,15 @@
+calls_domain: calls.example.com
+calls_owner_email: you@example.com
+
+telegram_bot_token: "123456:ABC..."
+telegram_owner_id: "123456789"
+
+hermes_model: gpt-6-sol
+role_model: gpt-6-sol
+
+# Optional: email sign-in codes through any SMTP relay (Resend shown).
+# smtp_host: smtp.resend.com
+# smtp_port: 587
+# smtp_user: resend
+# smtp_pass: "re_..."
+# mail_from: no-reply@your-verified-domain

@@ -1,0 +1,41 @@
+- name: Calls stack on a bare Ubuntu 24.04 server
+  hosts: calls
+  become: true
+  vars_files:
+    - vars.yml
+  pre_tasks:
+    - name: Unattended upgrades
+      ansible.builtin.apt:
+        name: unattended-upgrades
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Unattended upgrades run daily
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+        mode: "0644"
+
+    - name: Firewall allows ssh, http and https
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop:
+        - { port: "22", proto: tcp }
+        - { port: "80", proto: tcp }
+        - { port: "443", proto: tcp }
+        - { port: "443", proto: udp }
+
+    - name: Firewall denies everything else and is on
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+  roles:
+    - geerlingguy.docker
+    - calls_stack

@@ -1,0 +1,231 @@
+- name: Stack directory
+  ansible.builtin.file:
+    path: "{{ calls_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Stack files from this repository
+  ansible.posix.synchronize:
+    src: "{{ calls_repo_dir }}/{{ item }}"
+    dest: "{{ calls_dir }}/"
+    owner: false
+    group: false
+    delete: true
+  loop:
+    - docker-compose.yml
+    - bridge
+    - hermes
+    - samples
+    - scripts
+    - skills
+    - vault
+  notify: Restart the services that read mounted files
+
+- name: Production compose override
+  ansible.builtin.template:
+    src: docker-compose.prod.yml.j2
+    dest: "{{ calls_dir }}/docker-compose.prod.yml"
+    mode: "0644"
+
+- name: Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ calls_dir }}/Caddyfile"
+    mode: "0644"
+  notify: Restart the services that read mounted files
+
+- name: Read the secrets already on the server
+  ansible.builtin.slurp:
+    src: "{{ calls_dir }}/.env"
+  register: calls_env_file
+  failed_when: false
+
+- name: Keep existing secrets, generate the missing ones
+  vars:
+    existing_lines: "{{ (calls_env_file.content | default('') | b64decode).splitlines() | select('match', '^[A-Z_]+=') }}"
+    existing: "{{ dict(existing_lines | map('regex_replace', '^([A-Z_]+)=(.*)$', '\\1\t\\2') | map('split', '\t')) }}"
+    generated:
+      OWNER_TOKEN: "t2g_{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=48) }}"
+      JWT_SECRET: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=64) }}"
+      DATA_ENCRYPTION_KEY: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=32) }}"
+      FLEET_SECRET: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=64) }}"
+      BRIDGE_KEY: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=48) }}"
+  ansible.builtin.set_fact:
+    calls_secret_names: "{{ generated.keys() | list }}"
+    calls_api_key_names: [VAULT_API_KEY, AGENT_API_KEY]
+    calls_secrets: "{{ generated | combine(existing | dict2items | selectattr('key', 'in', generated.keys() | list + ['VAULT_API_KEY', 'AGENT_API_KEY']) | items2dict) }}"
+  no_log: true
+
+- name: Secrets file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ calls_dir }}/.env"
+    mode: "0600"
+  no_log: true
+
+- name: trip2g is up
+  community.docker.docker_compose_v2:
+    project_src: "{{ calls_dir }}"
+    services: [trip2g]
+    wait: true
+    wait_timeout: 180
+
+- name: API keys for the stack and for your agent
+  ansible.builtin.command:
+    chdir: "{{ calls_dir }}"
+    argv:
+      - docker
+      - compose
+      - exec
+      - -T
+      - trip2g
+      - wget
+      - -qO-
+      - "--header=Authorization: Bearer {{ calls_secrets.OWNER_TOKEN }}"
+      - "--header=Content-Type: application/json"
+      - "--post-data={{ request | to_json }}"
+      - http://127.0.0.1:8380/graphql
+  vars:
+    request:
+      query: "mutation($i: CreateApiKeyInput!) { admin { createApiKey(input: $i) { ... on CreateApiKeyPayload { value } ... on ErrorPayload { message } } } }"
+      variables:
+        i:
+          description: "{{ item.description }}"
+  loop:
+    - { name: VAULT_API_KEY, description: call dashboard }
+    - { name: AGENT_API_KEY, description: your agent }
+  when: calls_secrets[item.name] is not defined
+  register: calls_api_keys
+  no_log: true
+
+- name: Remember the new API keys
+  ansible.builtin.set_fact:
+    calls_secrets: "{{ calls_secrets | combine({item.item.name: (item.stdout | from_json).data.admin.createApiKey.value}) }}"
+  loop: "{{ calls_api_keys.results | selectattr('stdout', 'defined') }}"
+  no_log: true
+
+- name: Secrets file with the API keys
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ calls_dir }}/.env"
+    mode: "0600"
+  no_log: true
+
+- name: The whole stack is up
+  community.docker.docker_compose_v2:
+    project_src: "{{ calls_dir }}"
+    remove_orphans: true
+
+- name: Onboarding vault archive for the owner
+  ansible.builtin.shell: >-
+    umask 077 &&
+    docker compose exec -T trip2g wget -qO- --header "Authorization: Bearer $OWNER_TOKEN"
+    http://127.0.0.1:8380/_system/onboarding-vault > onboarding.zip.part &&
+    mv onboarding.zip.part onboarding.zip
+  args:
+    chdir: "{{ calls_dir }}"
+    creates: "{{ calls_dir }}/onboarding.zip"
+  environment:
+    OWNER_TOKEN: "{{ calls_secrets.OWNER_TOKEN }}"
+  no_log: true
+
+- name: https answers with a valid certificate
+  ansible.builtin.uri:
+    url: "https://{{ calls_domain }}/"
+    status_code: [200, 401]
+  register: calls_https
+  until: calls_https is succeeded
+  retries: 30
+  delay: 10
+
+- name: fleet registered a webhook for every role
+  ansible.builtin.command:
+    chdir: "{{ calls_dir }}"
+    argv:
+      - docker
+      - compose
+      - exec
+      - -T
+      - trip2g
+      - wget
+      - -qO-
+      - "--header=Authorization: Bearer {{ calls_secrets.OWNER_TOKEN }}"
+      - "--header=Content-Type: application/json"
+      - '--post-data={"query":"{ admin { allChangeWebhooks { nodes { url } } } }"}'
+      - http://127.0.0.1:8380/graphql
+  register: calls_webhooks
+  changed_when: false
+  until: (calls_webhooks.stdout | from_json).data.admin.allChangeWebhooks.nodes | length >= calls_role_count | int
+  retries: 12
+  delay: 10
+  vars:
+    calls_role_count: "{{ lookup('ansible.builtin.fileglob', calls_repo_dir ~ '/vault/roles/*.md', wantlist=True) | length }}"
+  no_log: true
+
+- name: The Telegram bot's name
+  ansible.builtin.uri:
+    url: "https://api.telegram.org/bot{{ telegram_bot_token }}/getMe"
+  register: calls_bot
+  no_log: true
+
+- name: Whether Codex is logged in
+  ansible.builtin.command:
+    chdir: "{{ calls_dir }}"
+    argv:
+      - docker
+      - compose
+      - exec
+      - -T
+      - codex-bridge
+      - /opt/hermes/.venv/bin/python
+      - -c
+      - "import sys; sys.path.insert(0, '/opt/hermes'); from agent.auxiliary_client import _build_codex_client; print(str(_build_codex_client('')[0] is not None).lower())"
+  register: calls_codex
+  changed_when: false
+
+- name: Access file for your agent
+  ansible.builtin.template:
+    src: agent-access.md.j2
+    dest: "{{ calls_dir }}/agent-access.md"
+    mode: "0600"
+  no_log: true
+
+- name: Run summary
+  vars:
+    ssh: "{{ ansible_user | default('root') }}@{{ inventory_hostname }}"
+    bot: "@{{ calls_bot.json.result.username }}"
+  ansible.builtin.set_fact:
+    calls_summary: >-
+      {{ {
+        'url': 'https://' ~ calls_domain,
+        'owner_email': calls_owner_email,
+        'sign_in': {
+          'on_server': 'ssh ' ~ ssh ~ " 'cd " ~ calls_dir ~ " && docker compose exec -T trip2g /trip2g login-link'",
+          'from_telegram': 'Write to ' ~ bot ~ ': «дай ссылку для входа». The bot answers with a «Войти» button.',
+          'link_lifetime_minutes': 5
+        },
+        'telegram_bot': bot,
+        'telegram_owner_id': telegram_owner_id | string,
+        'codex_logged_in': calls_codex.stdout | trim == 'true',
+        'codex_login': 'ssh -t ' ~ ssh ~ " 'cd " ~ calls_dir ~ " && docker compose run --rm --no-deps --user 10000:10000 --entrypoint hermes hermes auth add openai-codex'",
+        'files': {
+          'run_summary': calls_dir ~ '/run-summary.json',
+          'agent_access': calls_dir ~ '/agent-access.md',
+          'onboarding_vault': calls_dir ~ '/onboarding.zip',
+          'secrets': calls_dir ~ '/.env'
+        },
+        'checks': {
+          'https_status': calls_https.status,
+          'fleet_webhooks': (calls_webhooks.stdout | from_json).data.admin.allChangeWebhooks.nodes | length
+        }
+      } }}
+
+- name: Run summary file
+  ansible.builtin.copy:
+    dest: "{{ calls_dir }}/run-summary.json"
+    mode: "0600"
+    content: "{{ calls_summary | to_nice_json }}\n"
+
+- name: What is left for you
+  ansible.builtin.debug:
+    msg: "{{ calls_summary }}"
