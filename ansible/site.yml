@@ -4,6 +4,21 @@
   vars_files:
     - vars.yml
   pre_tasks:
+    - name: The owner email is a real address
+      vars:
+        email_domain: "{{ calls_owner_email | regex_replace('^.*@', '') | lower }}"
+      ansible.builtin.assert:
+        that:
+          - calls_owner_email | lower is match('^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$')
+          - email_domain is not match('^(.*\\.)?example\\.(com|org|net)$')
+          - email_domain is not match('.*\\.(tld|test|example|invalid|localhost|local)$')
+          - "'your-domain' not in email_domain"
+        fail_msg: >-
+          calls_owner_email is "{{ calls_owner_email }}". Set it in vars.yml to the owner's real
+          address: it is the owner account and the contact Caddy gives Let's Encrypt, which
+          refuses example.com, example.org, example.net and other placeholder domains.
+        quiet: true
+
     - name: Unattended upgrades
       ansible.builtin.apt:
         name: unattended-upgrades

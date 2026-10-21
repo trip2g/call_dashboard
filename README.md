@@ -1,5 +1,7 @@
 # Calls become threads
 
+**Local demo on your machine → [Quickstart](#quickstart). Your own server → [ansible/AGENTS.md](ansible/AGENTS.md).**
+
 A docker compose demo of one workflow: recorded calls are reviewed by agents,
 checked by their owner on a dashboard, and folded into long-running threads
 that an assistant in Telegram can answer from.
@@ -187,7 +189,8 @@ prints the address as text. Put the stack behind a real domain and set
 ## On your own server
 
 `ansible/` installs the same stack on a bare Ubuntu 24.04 server behind Caddy,
-with a Let's Encrypt certificate for your domain. The instructions are written
+with a certificate for your domain from Let's Encrypt (Caddy falls back to
+ZeroSSL if that fails). The instructions are written
 for an AI agent to run: **[ansible/AGENTS.md](ansible/AGENTS.md)** lists the
 inputs, the commands, the checks after each step, the known failures, and what
 to hand back to you. A person can follow it just as well.
