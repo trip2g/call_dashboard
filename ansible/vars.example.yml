@@ -1,0 +1,8 @@
+calls_domain: calls.example.com
+calls_owner_email: you@example.com
+
+telegram_bot_token: "123456:ABC..."
+telegram_owner_id: "123456789"
+
+hermes_model: gpt-6-sol
+role_model: gpt-6-sol

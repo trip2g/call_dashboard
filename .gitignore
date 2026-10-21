@@ -1,1 +1,3 @@
 .env
+ansible/vars.yml
+ansible/inventory.ini

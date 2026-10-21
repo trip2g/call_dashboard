@@ -1,0 +1,10 @@
+{
+	email {{ calls_owner_email }}
+}
+
+{{ calls_domain }} {
+	encode zstd gzip
+	reverse_proxy trip2g:8380 {
+		header_up X-Real-IP {remote_host}
+	}
+}

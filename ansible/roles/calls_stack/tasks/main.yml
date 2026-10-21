@@ -1,0 +1,174 @@
+- name: Stack directory
+  ansible.builtin.file:
+    path: "{{ calls_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Stack files from this repository
+  ansible.posix.synchronize:
+    src: "{{ calls_repo_dir }}/{{ item }}"
+    dest: "{{ calls_dir }}/"
+    owner: false
+    group: false
+    delete: true
+  loop:
+    - docker-compose.yml
+    - bridge
+    - hermes
+    - samples
+    - scripts
+    - skills
+    - vault
+  notify: Restart the stack
+
+- name: Production compose override
+  ansible.builtin.template:
+    src: docker-compose.prod.yml.j2
+    dest: "{{ calls_dir }}/docker-compose.prod.yml"
+    mode: "0644"
+
+- name: Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ calls_dir }}/Caddyfile"
+    mode: "0644"
+  notify: Restart the stack
+
+- name: Read the secrets already on the server
+  ansible.builtin.slurp:
+    src: "{{ calls_dir }}/.env"
+  register: calls_env_file
+  failed_when: false
+
+- name: Keep existing secrets, generate the missing ones
+  vars:
+    existing_lines: "{{ (calls_env_file.content | default('') | b64decode).splitlines() | select('match', '^[A-Z_]+=') }}"
+    existing: "{{ dict(existing_lines | map('regex_replace', '^([A-Z_]+)=(.*)$', '\\1\t\\2') | map('split', '\t')) }}"
+    generated:
+      OWNER_TOKEN: "t2g_{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=48) }}"
+      JWT_SECRET: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=64) }}"
+      DATA_ENCRYPTION_KEY: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=32) }}"
+      FLEET_SECRET: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=64) }}"
+      BRIDGE_KEY: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_lowercase', 'digits'], length=48) }}"
+  ansible.builtin.set_fact:
+    calls_secret_names: "{{ generated.keys() | list }}"
+    calls_api_key_names: [VAULT_API_KEY, AGENT_API_KEY]
+    calls_secrets: "{{ generated | combine(existing | dict2items | selectattr('key', 'in', generated.keys() | list + ['VAULT_API_KEY', 'AGENT_API_KEY']) | items2dict) }}"
+    calls_existing_password_hash: "{{ existing.OWNER_PASSWORD_HASH | default('') | regex_replace(\"^'(.*)'$\", '\\1') }}"
+  no_log: true
+
+- name: PENDING trip2g release — owner password sign-in (hash-password and OWNER_PASSWORD_HASH are placeholder names)
+  when: calls_owner_password_login
+  block:
+    - name: Owner password, generated once
+      ansible.builtin.shell: umask 077 && head -c 18 /dev/urandom | base64 > owner-password
+      args:
+        chdir: "{{ calls_dir }}"
+        creates: "{{ calls_dir }}/owner-password"
+
+    - name: Hash the owner password with the trip2g binary
+      ansible.builtin.shell: docker run --rm -i --entrypoint /trip2g {{ trip2g_image }} hash-password < owner-password
+      args:
+        chdir: "{{ calls_dir }}"
+      register: calls_password_hash
+      changed_when: false
+      when: calls_existing_password_hash == ''
+      no_log: true
+
+    - name: Remember the owner password hash
+      ansible.builtin.set_fact:
+        calls_owner_password_hash: "{{ calls_password_hash.stdout | default(calls_existing_password_hash, true) | trim }}"
+      no_log: true
+
+- name: Secrets file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ calls_dir }}/.env"
+    mode: "0600"
+  no_log: true
+
+- name: trip2g is up
+  community.docker.docker_compose_v2:
+    project_src: "{{ calls_dir }}"
+    services: [trip2g]
+    wait: true
+    wait_timeout: 180
+
+- name: API keys for the stack and for your agent
+  ansible.builtin.command:
+    chdir: "{{ calls_dir }}"
+    argv:
+      - docker
+      - compose
+      - exec
+      - -T
+      - trip2g
+      - wget
+      - -qO-
+      - "--header=Authorization: Bearer {{ calls_secrets.OWNER_TOKEN }}"
+      - "--header=Content-Type: application/json"
+      - "--post-data={{ request | to_json }}"
+      - http://127.0.0.1:8380/graphql
+  vars:
+    request:
+      query: "mutation($i: CreateApiKeyInput!) { admin { createApiKey(input: $i) { ... on CreateApiKeyPayload { value } ... on ErrorPayload { message } } } }"
+      variables:
+        i:
+          description: "{{ item.description }}"
+  loop:
+    - { name: VAULT_API_KEY, description: call dashboard }
+    - { name: AGENT_API_KEY, description: your agent }
+  when: calls_secrets[item.name] is not defined
+  register: calls_api_keys
+  no_log: true
+
+- name: Remember the new API keys
+  ansible.builtin.set_fact:
+    calls_secrets: "{{ calls_secrets | combine({item.item.name: (item.stdout | from_json).data.admin.createApiKey.value}) }}"
+  loop: "{{ calls_api_keys.results | selectattr('stdout', 'defined') }}"
+  no_log: true
+
+- name: Secrets file with the API keys
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ calls_dir }}/.env"
+    mode: "0600"
+  no_log: true
+
+- name: The whole stack is up
+  community.docker.docker_compose_v2:
+    project_src: "{{ calls_dir }}"
+    remove_orphans: true
+
+- name: Onboarding vault archive for the owner
+  ansible.builtin.shell: >-
+    umask 077 &&
+    docker compose exec -T trip2g wget -qO- --header "Authorization: Bearer $OWNER_TOKEN"
+    http://127.0.0.1:8380/_system/onboarding-vault > onboarding.zip.part &&
+    mv onboarding.zip.part onboarding.zip
+  args:
+    chdir: "{{ calls_dir }}"
+    creates: "{{ calls_dir }}/onboarding.zip"
+  environment:
+    OWNER_TOKEN: "{{ calls_secrets.OWNER_TOKEN }}"
+  no_log: true
+
+- name: Access file for your agent
+  ansible.builtin.template:
+    src: agent-access.md.j2
+    dest: "{{ calls_dir }}/agent-access.md"
+    mode: "0600"
+  no_log: true
+
+- name: What is left for you
+  vars:
+    calls_ssh: "{{ ansible_user | default('root') }}@{{ inventory_hostname }}"
+    calls_sign_in: >-
+      {{ ('Sign in as ' ~ calls_owner_email ~ ' with the password in ' ~ calls_dir ~ '/owner-password')
+      if calls_owner_password_login else
+      ('Sign in: ssh ' ~ calls_ssh ~ " 'cd " ~ calls_dir ~ " && docker compose exec trip2g /trip2g login-link'") }}
+  ansible.builtin.debug:
+    msg:
+      - "{{ calls_sign_in }}"
+      - "Log in to Codex: ssh -t {{ calls_ssh }} 'cd {{ calls_dir }} && docker compose run --rm --no-deps --user 10000:10000 --entrypoint hermes hermes auth add openai-codex'"
+      - "Your vault and your agent's access: scp {{ calls_ssh }}:{{ calls_dir }}/{onboarding.zip,agent-access.md} ."

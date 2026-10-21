@@ -1,0 +1,33 @@
+# Access to {{ calls_domain }} for your AI agent
+
+Give this file to your agent. It holds an API key: keep it as private as a
+password, and delete the key in trip2g's admin (API keys) to revoke it.
+
+- Instance: https://{{ calls_domain }}
+- API key: `{{ calls_secrets.AGENT_API_KEY }}`
+- GraphQL: https://{{ calls_domain }}/graphql (header `X-API-Key`)
+- MCP: https://{{ calls_domain }}/_system/mcp (header `X-API-Key`)
+
+## Read and search the vault over MCP
+
+Claude Code:
+
+```sh
+claude mcp add --transport http calls https://{{ calls_domain }}/_system/mcp --header "X-API-Key: {{ calls_secrets.AGENT_API_KEY }}"
+```
+
+Any other MCP client: a streamable HTTP server at the URL above with the
+header `X-API-Key: {{ calls_secrets.AGENT_API_KEY }}`.
+
+## Sync a folder of notes
+
+```sh
+curl -fsSLo trip2g-sync.mjs https://raw.githubusercontent.com/trip2g/trip2g/{{ trip2g_sync_ref }}/onboarding-vault/.obsidian/plugins/trip2g/trip2g-sync.mjs
+export TRIP2G_API_KEY={{ calls_secrets.AGENT_API_KEY }}
+node trip2g-sync.mjs --api-url https://{{ calls_domain }}/graphql --dry-run <folder>
+node trip2g-sync.mjs --api-url https://{{ calls_domain }}/graphql <folder>
+```
+
+The first command shows what would be pushed; the second pushes it. Add
+`--two-way` to also pull the notes that changed on the server. Deleting a
+synced file and syncing again hides that note on the server.
