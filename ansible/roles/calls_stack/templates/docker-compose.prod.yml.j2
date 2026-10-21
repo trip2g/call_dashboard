@@ -13,9 +13,6 @@ services:
       DB_FILE: /data/trip2g.sqlite3
       OWNER_EMAIL: ${OWNER_EMAIL}
       OWNER_PERSONAL_TOKEN_VALUE: ${OWNER_TOKEN}
-{% if calls_owner_password_login %}
-      OWNER_PASSWORD_HASH: ${OWNER_PASSWORD_HASH}
-{% endif %}
       JWT_SECRET: ${JWT_SECRET}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
       WEBHOOK_ALLOW_PRIVATE: "true"
@@ -23,6 +20,13 @@ services:
       STORAGE_LOCAL_DIR: /data/storage
       MAX_REQUEST_BODY_SIZE: "{{ calls_max_request_body_mb }}"
       STORAGE_ASSETS_LIMIT: {{ calls_storage_assets_limit }}
+{% if smtp_host is defined %}
+      SMTP_HOST: {{ smtp_host }}
+      SMTP_PORT: "{{ smtp_port | default(587) }}"
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      MAIL_FROM: {{ mail_from }}
+{% endif %}
 
   fleet:
     image: ${TRIP2G_IMAGE}

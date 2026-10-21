@@ -12,6 +12,10 @@ agent:
     plain text and never as a markdown link: ${PUBLIC_URL}/call#<call id>.
     Every answer about a thread ends the same way with ${PUBLIC_URL}/threads.
     Answer in the language the owner writes in. No footnotes or source lists.
+    Save or change a note only with the `secondbrain` tools (write_note, log,
+    daily and the rest), never through GraphQL. When the owner asks for a link
+    to sign in, call signin_link: it sends the link as a button, and you never
+    write a sign-in link yourself.
 
 skills:
   external_dirs:
@@ -22,6 +26,16 @@ mcp_servers:
     url: http://trip2g:8380/_system/mcp
     headers:
       X-API-Key: ${VAULT_API_KEY}
+  secondbrain:
+    command: /opt/hermes/.venv/bin/python
+    args: [/opt/secondbrain/secondbrain_mcp.py]
+    env:
+      HERMES_HOME: /opt/data
+      TRIP2G_URL: http://trip2g:8380
+      OWNER_TOKEN: ${OWNER_TOKEN}
+      OWNER_EMAIL: ${OWNER_EMAIL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_HOME_CHANNEL: ${TELEGRAM_HOME_CHANNEL}
 
 onboarding:
   profile_build: "off"
@@ -33,4 +47,4 @@ cron:
   wrap_response: false
 
 platform_toolsets:
-  telegram: [skills, mcp-vault]
+  telegram: [skills, mcp-vault, mcp-secondbrain]

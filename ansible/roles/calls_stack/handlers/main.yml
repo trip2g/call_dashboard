@@ -1,4 +1,5 @@
-- name: Restart the stack
+- name: Restart the services that read mounted files
   community.docker.docker_compose_v2:
     project_src: "{{ calls_dir }}"
+    services: [caddy, codex-bridge, hermes]
     state: restarted

@@ -8,6 +8,18 @@ password, and delete the key in trip2g's admin (API keys) to revoke it.
 - GraphQL: https://{{ calls_domain }}/graphql (header `X-API-Key`)
 - MCP: https://{{ calls_domain }}/_system/mcp (header `X-API-Key`)
 
+## Signing the owner in
+
+There is no password. A sign-in link works once, for 5 minutes; mint one when
+the owner is ready to click it:
+
+```sh
+ssh {{ ansible_user | default('root') }}@{{ inventory_hostname }} 'cd {{ calls_dir }} && docker compose exec -T trip2g /trip2g login-link'
+```
+
+The owner can also ask the Telegram bot for one («дай ссылку для входа»); it
+arrives as a button.
+
 ## Read and search the vault over MCP
 
 Claude Code:

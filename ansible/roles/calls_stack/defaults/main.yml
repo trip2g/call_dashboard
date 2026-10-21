@@ -11,4 +11,4 @@ role_model: gpt-6-sol
 calls_max_request_body_mb: 200
 calls_storage_assets_limit: 20GB
 
-calls_owner_password_login: false
+

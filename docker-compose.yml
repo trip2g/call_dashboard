@@ -26,7 +26,7 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8380}
       DB_FILE: /data/trip2g.sqlite3
       DEV: "true"
-      OWNER_EMAIL: owner@example.com
+      OWNER_EMAIL: ${OWNER_EMAIL:-owner@example.com}
       OWNER_PERSONAL_TOKEN_VALUE: ${OWNER_TOKEN:?run scripts/setup.sh first}
       JWT_SECRET: ${JWT_SECRET:?run scripts/setup.sh first}
       DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?run scripts/setup.sh first}
@@ -92,11 +92,25 @@ services:
       TRIP2G_FLEET_DEFAULT_MODEL: ${ROLE_MODEL:-gpt-6-sol}
       TRIP2G_FLEET_AGENTS_FOLDER: roles/
 
+  vault-seed:
+    image: *hermes-image
+    user: "10000:10000"
+    entrypoint: ["/opt/hermes/.venv/bin/python", "/opt/secondbrain/secondbrain_seed.py"]
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    environment:
+      OWNER_TOKEN: ${OWNER_TOKEN}
+      TRIP2G_URL: http://trip2g:8380
+    volumes:
+      - hermes:/opt/data
+      - ./hermes/secondbrain:/opt/secondbrain:ro
+
   hermes:
     image: *hermes-image
     command: ["gateway", "run"]
     depends_on:
-      seed:
+      vault-seed:
         condition: service_completed_successfully
     restart: unless-stopped
     environment:
@@ -105,10 +119,13 @@ services:
       TELEGRAM_ALLOWED_USERS: ${TELEGRAM_OWNER_ID:?set TELEGRAM_OWNER_ID in .env}
       TELEGRAM_HOME_CHANNEL: ${TELEGRAM_OWNER_ID}
       VAULT_API_KEY: ${VAULT_API_KEY}
+      OWNER_TOKEN: ${OWNER_TOKEN}
+      OWNER_EMAIL: ${OWNER_EMAIL:-owner@example.com}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8380}
     volumes:
       - hermes:/opt/data
       - ./hermes/config.yaml:/etc/hermes/config.yaml:ro
+      - ./hermes/secondbrain:/opt/secondbrain:ro
       - ./skills:/opt/skills:ro
       - ./hermes/scripts/calls_notify.py:/opt/data/scripts/calls_notify.py:ro
 

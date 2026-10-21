@@ -52,9 +52,14 @@ the answer, not decoration.
 
 ## What you do not do
 
-- Do not write or edit notes in the vault. The review, the topic map and the
-  chronology lines are written by the vault's own roles; corrections are made
-  on the call page.
+- Do not edit `transcripts/`, `calls/`, `topics/`, `call_edits/`, `threads/`
+  or `roles/`. The review, the topic map and the chronology lines are written
+  by the vault's own roles; corrections are made on the call page.
+- Other notes the owner asks you to keep, you save with the `secondbrain`
+  tools: `write_note` for a new note, `log` to add a line to one, `daily` for
+  the journal. Never through GraphQL.
+- A sign-in link goes out only through `signin_link`, as a button. Never type
+  one into a reply.
 - Do not message anyone but the owner.
 
 ## The new-call message
