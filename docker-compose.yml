@@ -1,6 +1,7 @@
 name: call-dashboard
 
 x-hermes-image: &hermes-image nousresearch/hermes-agent:v0.22.2
+x-trip2g-image: &trip2g-image ghcr.io/trip2g/trip2g:0.12.0
 
 services:
   minio:
@@ -14,7 +15,7 @@ services:
       - minio:/data
 
   trip2g:
-    image: ghcr.io/trip2g/trip2g:0.12.0
+    image: *trip2g-image
     depends_on: [minio]
     restart: unless-stopped
     ports:
@@ -71,7 +72,8 @@ services:
       - ./bridge:/bridge:ro
 
   fleet:
-    build: ./fleet
+    image: *trip2g-image
+    entrypoint: ["/fleet"]
     depends_on:
       seed:
         condition: service_completed_successfully

@@ -52,4 +52,4 @@ fi
 
 echo "Secrets are in .env. Next: log in to Codex, then start the stack:"
 echo "  docker compose run --rm --no-deps --user 10000:10000 --entrypoint hermes hermes auth add openai-codex"
-echo "  docker compose up -d --build"
+echo "  docker compose up -d"

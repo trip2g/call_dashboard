@@ -67,13 +67,13 @@ flowchart LR
 | `minio` | `pgsty/silo` | File storage trip2g needs for assets |
 | `trip2g` | `ghcr.io/trip2g/trip2g:0.12.0` | The vault, the pages, MCP at `/_system/mcp`, GraphQL |
 | `seed` | `node` | Pushes `vault/` once with trip2g's own sync CLI |
-| `fleet` | built from the trip2g `v0.12.0` tag | Registers webhooks for `vault/roles/*.md` and runs them |
+| `fleet` | `ghcr.io/trip2g/trip2g:0.12.0`, run as `/fleet` | Registers webhooks for `vault/roles/*.md` and runs them |
 | `codex-bridge` | `nousresearch/hermes-agent` | Turns fleet's chat-completions calls into Codex Responses calls with the Codex login Hermes stores |
 | `hermes` | `nousresearch/hermes-agent:v0.22.2` | The Telegram assistant, with the `calls` skill and the notify job |
 | `notify-job` | same | Creates the cron job once, then exits |
 
-Fleet has no published image, so `fleet/Dockerfile` clones trip2g at a pinned
-tag and builds it.
+Fleet ships inside the trip2g image as a second binary, `/fleet`, so both
+services run the same pinned image.
 
 Fleet speaks OpenAI chat completions; a ChatGPT plan gives you the Codex
 Responses API instead. `bridge/codex_bridge.py` is the small adapter in
@@ -127,10 +127,10 @@ asks you to log in again. The device login above avoids that.
 ### 4. Start
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 ```
 
-The first build of fleet takes a few minutes. Then:
+Then:
 
 - open <http://localhost:8380>, sign in as `owner@example.com`; the stack runs
   trip2g with `DEV=true`, so the code is always `111111`;
